@@ -1,0 +1,18 @@
+# Ignore venv (your virtual environment)
+venv/
+
+# Ignore env file with sensitive API keys
+.env
+
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+
+# Ignore VSCode settings
+.vscode/
+
+# Ignore Streamlit cache
+.streamlit/
+
+# Ignore Jupyter checkpoint files (if used)
+.ipynb_checkpoints/
