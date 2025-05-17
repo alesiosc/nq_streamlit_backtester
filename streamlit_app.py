@@ -1,46 +1,76 @@
-import streamlit as st
-import pandas as pd
 import os
+import json
+import pandas as pd
+import streamlit as st
 import requests
+from dotenv import load_dotenv
 
-st.set_page_config(page_title="📊 NQ Backtest Assistant", layout="wide")
+# Load environment variables
+load_dotenv()
 
+st.set_page_config(page_title="Natural Language NQ Backtesting", layout="wide")
 st.title("📈 Natural Language NQ Backtesting (1-min Data)")
-st.markdown("Choose a CSV, enter a question, and optionally export results.")
 
+# === Select CSV and Load ===
 csv_folder = "split_chunks"
+os.makedirs(csv_folder, exist_ok=True)
+
 available_csvs = sorted([f for f in os.listdir(csv_folder) if f.endswith(".csv")])
-selected_file = st.selectbox("Choose a CSV to analyze", available_csvs)
-df = pd.read_csv(os.path.join(csv_folder, selected_file), nrows=50000)
-st.dataframe(df.head(20))
+csv_file = st.selectbox("Choose a CSV to analyze", available_csvs)
 
-user_query = st.text_input("Ask a question (e.g., 'How many times did price move 3% after NFP?')")
-api_key = st.text_input("Enter your API key (DeepSeek/Mistral)", type="password")
-model_endpoint = st.selectbox("Choose model provider", ["DeepSeek", "Mistral"])
+df = None
+if csv_file:
+    df = pd.read_csv(os.path.join(csv_folder, csv_file))
+    st.dataframe(df.head())
 
-def call_free_llm(query, model="deepseek", api_key=None):
-    if not api_key:
-        return "❌ API key required"
-    url = "https://api.deepseek.com/v1/chat/completions" if model == "deepseek" else "https://api.mistral.com/v1/chat/completions"
-    payload = {
-        "model": "deepseek-chat" if model == "deepseek" else "mistral-small",
-        "messages": [{"role": "user", "content": query}],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+# === Input Prompt ===
+question = st.text_input("Ask a question")
+
+# === API Key Handling ===
+st.markdown("Enter your API key (OpenRouter)")
+api_key = os.getenv("OPENROUTER_API_KEY", "")
+user_key_input = st.text_input("🔑 API Key (optional, overrides .env)", type="password")
+if user_key_input:
+    api_key = user_key_input
+
+# === Model Selection ===
+model_options = [
+    "meta-llama/llama-3.3-8b-instruct:free",
+    "openrouter/openchat",
+    "openrouter/deepseek-chat",
+    "nousresearch/deephermes-3-mistral-24b",
+    "mistralai/mistral-medium",
+    "deepseek-ai/deepseek-coder:free"
+]
+model = st.selectbox("Choose model", model_options)
+
+# === Submit Button ===
+if st.button("Submit") and question and api_key:
+    st.subheader("🧠 Model Response")
+
     try:
-        res = requests.post(url, json=payload, headers=headers, timeout=30)
-        if res.status_code == 200:
-            return res.json()["choices"][0]["message"]["content"]
-        else:
-            return f"⚠️ Error: {res.text}"
-    except Exception as e:
-        return f"⚠️ Request failed: {str(e)}"
+        csv_sample = df.head(50).to_csv(index=False) if df is not None else ""
 
-if user_query and st.button("Submit"):
-    with st.spinner("Asking model..."):
-        answer = call_free_llm(user_query, model_endpoint.lower(), api_key)
-        st.markdown("### 🧠 Response")
-        st.write(answer)
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "http://localhost",
+            "X-Title": "NQ Backtester"
+        }
+
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a financial analyst. You will receive CSV samples from historical NQ 1-min data and be asked to analyze or backtest patterns using this data. If you are not able to execute Python, respond with the exact code you would run, and the app will handle it."},
+                {"role": "user", "content": f"Here is a sample of the dataset:\n\n{csv_sample}"},
+                {"role": "user", "content": question}
+            ]
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        result = response.json()["choices"][0]["message"]["content"]
+        st.markdown(result)
+
+    except Exception as e:
+        st.error(f"❌ API Error: {e}")
